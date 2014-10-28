@@ -33,11 +33,11 @@ var getClusterStatus = function(proxy) {
         });
 
         response.on('end', function() {
-		request.end();
+		
         });
     });
     console.log("Getting cluster state");
-
+    request.end();
     
 
 };
