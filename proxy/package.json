@@ -1,0 +1,8 @@
+{
+   "author": "Gary Drocella",
+   "name": "elasticsearch-proxy",
+   "contributers": ["Luke"],
+   "dependencies": {
+     "elasticsearch-thrift": "git://github.com/gdrocell/node-elasticsearch-thrift.git"
+   }
+}

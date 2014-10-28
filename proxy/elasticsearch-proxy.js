@@ -135,9 +135,59 @@
 
 */
 
+/*
+    Edited by Gary Drocella 10/21/2014 
+    - Added support for invoking elastic search using the thrift protocol encapsulating http REST.
+
+    Edited by Gary Drocella 10/28/2014
+    - Adding SSL support for proxy client to elasticsearch server communication
+ */
+
 var sys = require('sys'),
     fs = require('fs'),
-    http = require('http');
+    http = require('http'),
+    ElasticSearch = require('elasticsearch-thrift');
+
+
+/* Utility Methods */
+
+function parseUrlQuery(query) {
+
+    if(query == null) {
+	return null;
+    }
+
+    var queryArr = query.split("&");
+    var params = {};
+    var x;
+
+    if(queryArr == null) {
+	queryArr = [query];
+    }
+    
+    for(x in queryArr) {
+        var currentParam = queryArr[x];
+        var pArr = currentParam.split("=");
+        params[pArr[0]] = pArr[1];
+    }
+
+    return params;
+}
+
+
+function invokeEsViaThrift(servers, executeParams, cb) {
+    search = new ElasticSearch({ servers: servers },
+	        function() {		
+		    search.execute(executeParams,
+		       function(err, res) {
+		           cb(err,res);
+			   search.closeConnections();
+		       });
+    });
+
+    return search;
+}
+
 
 var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 
@@ -155,7 +205,9 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
         port : 8124,
         host: "127.0.0.1",
         preRequest: undefined,
-        postRequest: undefined
+        postRequest: undefined,
+	proxyClientProtocol: "thrift",  // use the thrift protocol or http protocol when invoking es  
+	esThriftServerSeeds : [{host:"localhost", port:9499}]
     };
 
     var filters = { "GET" : [], "POST" : [], "OPTIONS" : [], "PUT" : [], "DELETE" : [], "HEAD" : [] };
@@ -229,11 +281,58 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
             });
 
             req.on('end', function() {
+ 
+		/* Note: 10/20/14 Begin to insert code for thrift here! */
+		    
+		if(proxyConf.proxyClientProtocol == "thrift") {
+		    var url = require('url');
+		    var urlInfo = url.parse(req.url);
+		
+		    var paramJson = parseUrlQuery(urlInfo.query);
+		    var headerJson = req.headers;
+		    var restMethod = req.method;
+		    var path = urlInfo.pathname;
+		    var restBody = d;
 
-                var es = httpClient.getClient();
-                var request = es.request(req.method, req.url);
+		    //console.log("parameters: " + paramJson);
+		    //console.log("header json: " + JSON.stringify(headerJson));
+		    //console.log("rest Method: " + restMethod);
+		    //console.log("path: " + path);
+		    //console.log("rest body: " + restBody);
 
-                request.on('response', function(response) {
+		    invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
+				      {
+					  uri: path,
+					  headers: headerJson,
+					  method: restMethod,
+					  parameters: paramJson,
+					  body: restBody    
+				      }, 
+                                      function(err, tres) { 
+					  if(err) {
+					      console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
+					      return;
+					  }
+
+					  res.writeHead(tres.status, tres.headers);
+
+					  if(isFunction(proxyConf.postRequest)) {
+					      res.write(proxyConf.postRequest(req, tres, tres.body));
+					  }
+					  else {
+					      res.write(tres.body);
+					  }
+					  
+					  
+					  res.end();
+				      }
+		    ); 
+		}
+		else {
+		    var es = httpClient.getClient();
+		    var request = es.request(req.method, req.url);
+
+		    request.on('response', function(response) {
 
                     if (response.httpVersion === '1.1')
                         response.headers["Transfer-Encoding"] = "chunked";
@@ -263,9 +362,12 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
                             res.end();
                         });
                     }
+		
                 });
                 request.write(d);
                 request.end();
+	    }
+
             });
 
         } else {
@@ -359,14 +461,14 @@ var HttpClient = function(seeds) {
 
                 c.addListener('error', function (err) {
                     sys.log("Error using seed host: "+s[0]+":"+s[1]);
-                    console.log(err);
                     _processedSeeds++;
                     if (_processedSeeds === _numberOfSeeds) {
                         if (callback && typeof callback === "function") callback();
                     }
                 });
 
-                var request = c.request("GET", "/_cluster/nodes");
+		// /_cluster/nodes
+                var request = c.request("GET", "/_nodes");
                 request.on('response', function(response) {
 
                     var o = "";
@@ -393,9 +495,7 @@ var HttpClient = function(seeds) {
                             allNodes = mergeNodes(allNodes, _allNodes);
                             allNodesCount = 0;
                             for (n in allNodes) { if (allNodes.hasOwnProperty(n)) allNodesCount++; }
-//                            console.log("updated all nodes: " + new Date());
-//                            console.log(allNodes);
-                            if (callback && typeof callback === "function") callback();
+			    if (callback && typeof callback === "function") callback();
                         }
                     });
                 });
@@ -430,7 +530,6 @@ var HttpClient = function(seeds) {
                         var client = http.createClient(allNodes[n].address.port, allNodes[n].address.host);
                         // whatever error, remove node from other use
                         client.addListener('error', function (err) {
-                            console.log('error', err);
                             allNodesCount--;
                             delete allNodes[n];
                         });
@@ -476,7 +575,4 @@ if (typeof module !== 'undefined' && "exports" in module) {
         return proxy;
     };
 }
-
-
-
 
