@@ -43,7 +43,7 @@ thrift server for the elasticsearch plugin is 9500.
 You can also set the ezbake configuration directory with the following command line
 
 ```bash
-	export EZCONFIGURATION_DIR=path/to/ezbake-config.properties
+	export EZCONFIGURATION_DIR=path/to/ezbake config dir
 ```
 
 Setting thrift.use.ssl=true will have the proxy use SSL if you also have set the proxyClientProtocol to thrift.
