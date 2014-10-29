@@ -288,13 +288,8 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 		    var url = require('url');
 		    var urlInfo = url.parse(req.url);
 		
-		    if(req.method != "GET" || d.length > 0) {
-			if(urlInfo.query != null) {
-			    urlInfo.query= urlInfo.query + "&" + d;
-			}
-			else {
-			    urlInfo.query = d;
-			}
+		    if(req.method != "GET" && d.length > 0) {
+			urlInfo.query = d;
 		    }
 		    
 		    var headerJson = req.headers;
@@ -304,11 +299,11 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 		    var path = urlInfo.pathname;
 		    var restBody = d;
 
-		    console.log("parameters: " + paramJson);
-		    console.log("header json: " + JSON.stringify(headerJson));
-		    console.log("rest Method: " + restMethod);
-		    console.log("path: " + path);
-		    console.log("rest body: " + restBody);
+		    //console.log("parameters: " + paramJson);
+		    //console.log("header json: " + JSON.stringify(headerJson));
+		    //console.log("rest Method: " + restMethod);
+		    //console.log("path: " + path);
+		    //console.log("rest body: " + restBody);
 
 		    
 
