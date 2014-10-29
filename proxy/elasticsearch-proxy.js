@@ -288,17 +288,29 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 		    var url = require('url');
 		    var urlInfo = url.parse(req.url);
 		
-		    var paramJson = parseUrlQuery(urlInfo.query);
+		    if(req.method != "GET" || d.length > 0) {
+			if(urlInfo.query != null) {
+			    urlInfo.query= urlInfo.query + "&" + d;
+			}
+			else {
+			    urlInfo.query = d;
+			}
+		    }
+		    
 		    var headerJson = req.headers;
+		    var paramJson = parseUrlQuery(urlInfo.query);
+		    
 		    var restMethod = req.method;
 		    var path = urlInfo.pathname;
 		    var restBody = d;
 
-		    //console.log("parameters: " + paramJson);
-		    //console.log("header json: " + JSON.stringify(headerJson));
-		    //console.log("rest Method: " + restMethod);
-		    //console.log("path: " + path);
-		    //console.log("rest body: " + restBody);
+		    console.log("parameters: " + paramJson);
+		    console.log("header json: " + JSON.stringify(headerJson));
+		    console.log("rest Method: " + restMethod);
+		    console.log("path: " + path);
+		    console.log("rest body: " + restBody);
+
+		    
 
 		    invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
 				      {
