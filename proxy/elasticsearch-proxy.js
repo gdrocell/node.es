@@ -148,6 +148,14 @@ var sys = require('sys'),
     http = require('http'),
     ElasticSearch = require('elasticsearch-thrift');
 
+var methods = {
+    GET: 0,
+        PUT: 1,
+        POST: 2,
+        DELETE: 3,
+        HEAD: 4,
+        OPTIONS: 5
+        }
 
 /* Utility Methods */
 
@@ -287,14 +295,9 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 		if(proxyConf.proxyClientProtocol == "thrift") {
 		    var url = require('url');
 		    var urlInfo = url.parse(req.url);
-		
-		    if(req.method != "GET" && d.length > 0) {
-			urlInfo.query = d;
-		    }
 		    
 		    var headerJson = req.headers;
 		    var paramJson = parseUrlQuery(urlInfo.query);
-		    
 		    var restMethod = req.method;
 		    var path = urlInfo.pathname;
 		    var restBody = d;
@@ -311,9 +314,9 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 				      {
 					  uri: path,
 					  headers: headerJson,
-					  method: restMethod,
+					  method: methods[restMethod],
 					  parameters: paramJson,
-					  body: restBody    
+					  body: restBody.length == 0 ? "" : restBody    
 				      }, 
                                       function(err, tres) { 
 					  if(err) {
