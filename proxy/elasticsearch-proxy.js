@@ -146,7 +146,10 @@
 var sys = require('sys'),
     fs = require('fs'),
     http = require('http'),
-    ElasticSearch = require('elasticsearch-thrift');
+    ElasticSearch = require('elasticsearch-thrift'),
+    EzbakeSecurityClient = require('ezbakesecurityclient').Client,
+    EzConfiguration = require('ezConfiguration').EzConfiguration,
+    Q = require('q');
 
 var methods = {
     GET: 0,
@@ -156,6 +159,8 @@ var methods = {
         HEAD: 4,
         OPTIONS: 5
         }
+
+var HTTP_SEC_TOKEN = "http_security_token"
 
 /* Utility Methods */
 
@@ -198,6 +203,10 @@ function invokeEsViaThrift(servers, executeParams, cb) {
 
 
 var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
+    var self = this;
+
+    this.ezConfig = new EzConfiguration();
+    this.ezClient = new EzbakeSecurityClient(this.ezConfig);
 
     var proxy, httpClient, intervalId;
     var customConf = {};
@@ -308,35 +317,76 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 		    //console.log("path: " + path);
 		    //console.log("rest body: " + restBody);
 
-		    
+		    /* TODO: Adding the ezsecurity token to header */
 
-		    invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
+		    var doRespondWork = function(err, tres) { 
+			if(err) {
+			    console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
+			    return;
+			}
+		     
+			res.writeHead(tres.status, tres.headers);
+
+		        if(isFunction(proxyConf.postRequest)) {
+			    res.write(proxyConf.postRequest(req, tres, tres.body));
+			}
+			else {
+			    res.write(tres.body);
+		        }
+					  		  
+			res.end();
+		    }
+
+		    var doEsProxyCall = function() {
+			
+			invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
 				      {
 					  uri: path,
 					  headers: headerJson,
 					  method: methods[restMethod],
 					  parameters: paramJson,
 					  body: restBody.length == 0 ? "" : restBody    
-				      }, 
-                                      function(err, tres) { 
-					  if(err) {
-					      console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
-					      return;
-					  }
+				      }, doRespondWork); 
 
-					  res.writeHead(tres.status, tres.headers);
+		    }
 
-					  if(isFunction(proxyConf.postRequest)) {
-					      res.write(proxyConf.postRequest(req, tres, tres.body));
-					  }
-					  else {
-					      res.write(tres.body);
-					  }
-					  
-					  
-					  res.end();
-				      }
-		    ); 
+
+		    var handleError = function(err) {
+			throw "Error: " + err;
+		    }
+
+		    var doPromise = function(err, tok) {
+			var defer = Q.defer();
+
+			if(err) {
+			    defer.reject(err);
+			}
+			else {
+			    defer.resolve(tok);
+			}
+
+			return defer.promise;
+		    }
+
+		    var isValid = function (valid) {
+			if(!valid) {
+			    handleError("Invalid Security Token Received");
+			} 
+		    } 
+
+		    var validateToken = function(tok) {
+			self.validateReceivedToken(tok, function(err, valid) {
+				doPromise(err,valid).then(isValid, handleError)
+			});
+		    }
+
+		       
+		    self.ezClient.fetchTokenForProxiedUser(req, function(err,tok) {
+			doPromise(err,tok).then(validateToken, handleError);
+			headerJson[HTTP_SEC_TOKEN] = JSON.stringify(tok);
+			doEsProxyCall();
+		    });
+
 		}
 		else {
 		    var es = httpClient.getClient();

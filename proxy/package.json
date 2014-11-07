@@ -3,6 +3,9 @@
    "name": "elasticsearch-proxy",
    "contributers": ["Luke"],
    "dependencies": {
-     "elasticsearch-thrift": "git://github.com/gdrocell/node-elasticsearch-thrift.git"
+     "elasticsearch-thrift": "git://github.com/gdrocell/node-elasticsearch-thrift.git",
+     "ezConfiguration":"git+ssh://git@git.lab76.org:ezbake/ezbake-configuration.git#2.0-nodejs_repo",
+     "q": "*",
+     "ezbakesecurityclient": "git+ssh://git@git.lab76.org:ezbake/ezbake-security#2.0-nodejs_repo"
    }
 }
