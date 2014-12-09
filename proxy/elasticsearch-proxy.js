@@ -149,7 +149,8 @@ var sys = require('sys'),
     ElasticSearch = require('elasticsearch-thrift'),
     EzbakeSecurityClient = require('ezbakesecurityclient').Client,
     EzConfiguration = require('ezConfiguration').EzConfiguration,
-    Q = require('q');
+    Q = require('q'),
+    ThriftUtils = require('thriftutils').ThriftUtils;
 
 var methods = {
     GET: 0,
@@ -158,11 +159,13 @@ var methods = {
         DELETE: 3,
         HEAD: 4,
         OPTIONS: 5
-        }
+};
 
-var HTTP_SEC_TOKEN = "http_security_token"
+var HTTP_SEC_TOKEN = "http_security_token";
+var PROXY_MOCKED_KEY = "ezbake.security.client.use.mock";
 
 /* Utility Methods */
+
 
 function parseUrlQuery(query) {
 
@@ -207,6 +210,8 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 
     this.ezConfig = new EzConfiguration();
     this.ezClient = new EzbakeSecurityClient(this.ezConfig);
+    this.useMock = this.ezConfig.getBoolean(PROXY_MOCKED_KEY, false);
+    this.thriftUtils = new ThriftUtils(this.ezConfig);
 
     var proxy, httpClient, intervalId;
     var customConf = {};
@@ -321,6 +326,11 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 
 		    var doRespondWork = function(err, tres) { 
 			if(err) {
+
+			    res.writeHead(500, {'Content-Type': "text/plain"});
+			    res.write("Error: " + err);
+			    res.end();
+
 			    console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
 			    return;
 			}
@@ -339,6 +349,7 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 
 		    var doEsProxyCall = function() {
 			
+			try {
 			invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
 				      {
 					  uri: path,
@@ -347,12 +358,20 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 					  parameters: paramJson,
 					  body: restBody.length == 0 ? "" : restBody    
 				      }, doRespondWork); 
-
+			}
+			catch(e) {
+			    
+			    res.write(e);
+			    res.end();
+			}
 		    }
 
 
 		    var handleError = function(err) {
-			throw "Error: " + err;
+			console.log("Handling Error");
+			
+			res.write("Error: ", err);
+			res.end();
 		    }
 
 		    var doPromise = function(err, tok) {
@@ -383,7 +402,20 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
 		       
 		    self.ezClient.fetchTokenForProxiedUser(req, function(err,tok) {
 			doPromise(err,tok).then(validateToken, handleError);
-			headerJson[HTTP_SEC_TOKEN] = JSON.stringify(tok);
+
+			if(self.useMock) {
+			    console.log("Warning: Proxy is in mocked mode.  This is not a production option.");
+			    tok.validity["issuedTo"] = "mocked_app_id";
+			    tok.validity["issuer"] = "Issuer";
+			    console.log("Authorizations: ", tok["authorizations"], "\nAuthorization B64:", self.thriftUtils.serializeToBase64(tok["authorizations"]));
+			    //console.log(tok);
+			}
+			//var thriftutils = require("thriftutils");
+			//headerJson[HTTP_SEC_TOKEN] = JSON.stringify(tok);
+
+			
+
+			headerJson[HTTP_SEC_TOKEN] = self.thriftUtils.serializeToBase64(tok);
 			doEsProxyCall();
 		    });
 
@@ -552,7 +584,7 @@ var HttpClient = function(seeds) {
                         }
                         _processedSeeds++;
                         if (_processedSeeds === _numberOfSeeds) {
-                            allNodes = mergeNodes(allNodes, _allNodes);
+                           allNodes = mergeNodes(allNodes, _allNodes);
                             allNodesCount = 0;
                             for (n in allNodes) { if (allNodes.hasOwnProperty(n)) allNodesCount++; }
 			    if (callback && typeof callback === "function") callback();
@@ -635,4 +667,5 @@ if (typeof module !== 'undefined' && "exports" in module) {
         return proxy;
     };
 }
+
 
