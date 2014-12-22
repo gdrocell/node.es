@@ -4,8 +4,8 @@
    "contributers": ["Luke"],
    "dependencies": {
      "elasticsearch-thrift": "git://github.com/gdrocell/node-elasticsearch-thrift.git",
-     "ezConfiguration":"git+ssh://git@git.lab76.org:ezbake/ezbake-configuration.git#2.0-nodejs_repo",
+     "ezbake-configuration":"2.0.0",
      "q": "*",
-     "ezbakesecurityclient": "git+ssh://git@git.lab76.org:ezbake/ezbake-security#2.0-nodejs_repo"
+     "ezbake-security-client": "2.0.0"
    }
 }
