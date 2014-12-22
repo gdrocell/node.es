@@ -147,11 +147,10 @@ var sys = require('sys'),
     fs = require('fs'),
     http = require('http'),
     ElasticSearch = require('elasticsearch-thrift'),
-    EzbakeSecurityClient = require('ezbakesecurityclient').Client,
-    EzConfiguration = require('ezConfiguration').EzConfiguration,
+    EzbakeSecurityClient = require('ezbake-security-client').Client,
+    EzConfiguration = require('ezbake-configuration').EzConfiguration,
     Q = require('q'),
-    ThriftUtils = require('thriftutils').ThriftUtils,
-    EsAccess = require('./lib/util/EsAccess.js');
+    ThriftUtils = require('thriftutils').ThriftUtils;
 
 var methods = {
     GET: 0,
@@ -186,7 +185,6 @@ var ezConfig = new EzConfiguration();
 var ezClient = new EzbakeSecurityClient(ezConfig);
 var useMock = false;
 var thriftUtils = null;
-var esAccess = new EsAccess("./access.json");
 
 /* Utility Methods */
 
