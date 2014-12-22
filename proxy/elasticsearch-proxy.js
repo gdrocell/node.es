@@ -150,7 +150,8 @@ var sys = require('sys'),
     EzbakeSecurityClient = require('ezbakesecurityclient').Client,
     EzConfiguration = require('ezConfiguration').EzConfiguration,
     Q = require('q'),
-    ThriftUtils = require('thriftutils').ThriftUtils;
+    ThriftUtils = require('thriftutils').ThriftUtils,
+    EsAccess = require('./lib/util/EsAccess.js');
 
 var methods = {
     GET: 0,
@@ -185,6 +186,7 @@ var ezConfig = new EzConfiguration();
 var ezClient = new EzbakeSecurityClient(ezConfig);
 var useMock = false;
 var thriftUtils = null;
+var esAccess = new EsAccess("./access.json");
 
 /* Utility Methods */
 
