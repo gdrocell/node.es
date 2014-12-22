@@ -150,7 +150,7 @@ var sys = require('sys'),
     EzbakeSecurityClient = require('ezbake-security-client').Client,
     EzConfiguration = require('ezbake-configuration').EzConfiguration,
     Q = require('q'),
-    ThriftUtils = require('thriftutils').ThriftUtils;
+    ThriftUtils = require('ezbake-thrift-utils').ThriftUtils;
 
 var methods = {
     GET: 0,
