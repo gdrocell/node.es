@@ -164,6 +164,28 @@ var methods = {
 var HTTP_SEC_TOKEN = "http_security_token";
 var PROXY_MOCKED_KEY = "ezbake.security.client.use.mock";
 
+    var proxyConf = {
+        seeds : ["localhost:9200"],
+        refresh : 1000,
+        allow : {
+            "GET" : ["(_search|_status|_mapping|_count)","/.+/.+/.+/_mlt","/.+/.+/.+]"],
+            "POST" : ["_search|_count","/.+/.+/.+/_mlt"],
+            "OPTIONS" : [".*"], // allow any pre-flight request
+            "HEAD" : [".*"]
+        },
+        port : 8124,
+        host: "127.0.0.1",
+        preRequest: undefined,
+        postRequest: undefined,
+	proxyClientProtocol: "thrift",  // use the thrift protocol or http protocol when invoking es  
+	esThriftServerSeeds : [{host:"localhost", port:9499}]
+    };
+
+var ezConfig = new EzConfiguration();
+var ezClient = new EzbakeSecurityClient(ezConfig);
+var useMock = false;
+var thriftUtils = null;
+
 /* Utility Methods */
 
 
@@ -196,7 +218,11 @@ function invokeEsViaThrift(servers, executeParams, cb) {
 	        function() {		
 		    search.execute(executeParams,
 		       function(err, res) {
-		           cb(err,res);
+			   if(err) {
+			       console.log("Error: ", err);
+			       throw "Error: " + err;
+			   }
+			   cb(err,res);
 			   search.closeConnections();
 		       });
     });
@@ -205,32 +231,184 @@ function invokeEsViaThrift(servers, executeParams, cb) {
 }
 
 
+function doEnd(req,res, d, proxyIsCalling, cb) {
+    if(proxyConf.proxyClientProtocol == "thrift") {
+	var url = require('url');
+	var urlInfo = url.parse(req.url);
+		    
+	var headerJson = req.headers;
+	var paramJson = parseUrlQuery(urlInfo.query);
+	var restMethod = req.method;
+	var path = urlInfo.pathname;
+	var restBody = d;
+
+
+	/* TODO: Adding the ezsecurity token to header */
+
+	var doRespondWork = function(err, tres) { 
+	    if(err) {
+		if(res == null) {
+		    console.log("Error: Invoking elastic search with uri (" + path + ")", err);
+		    return;
+		}
+
+		res.writeHead(500, {'Content-Type': "text/plain"});
+		res.write("Error: " + err);
+		res.end();
+
+		console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
+		return;
+	    }
+	    
+	    
+	    if(res == null) {
+		if(isFunction(proxyConf.postRequest)) {
+		    cb(null, proxyConf.postRequest(req, tres, tres.body));
+		}
+		else {
+		    cb(null, tres.body);
+		}
+
+		return;
+	    }
+	    else {
+		res.writeHead(tres.status, tres.headers);
+
+		if(isFunction(proxyConf.postRequest)) {
+		    res.write(proxyConf.postRequest(req, tres, tres.body));
+		}
+		else {
+		    res.write(tres.body);
+		}
+	    }
+					  		  
+	    res.end();
+	}
+
+        var doEsProxyCall = function() {
+	    try {
+		invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
+				  {
+				      uri: path,
+				      headers: headerJson,
+				      method: methods[restMethod],
+				      parameters: paramJson,
+				      body: restBody.length == 0 ? "" : restBody    
+		 }, doRespondWork); 
+	    }
+	    catch(e) {
+		res.write(e);
+		res.end();
+	    }
+        }
+
+
+	var handleError = function(err) {
+	    console.log("Handling Error");
+			
+	    res.write("Error: ", err);
+	    res.end();
+	}
+
+	var doPromise = function(err, tok) {
+	    var defer = Q.defer();
+
+	    if(err) {
+		defer.reject(err);
+	    }
+	    else {
+		defer.resolve(tok);
+	    }
+
+	    return defer.promise;
+	}
+
+	var isValid = function (valid) {
+	    if(!proxyIsCalling && !valid) {
+		handleError("Invalid Security Token Received");
+	    } 
+	} 
+
+	var validateToken = function(tok) {
+	    ezClient.validateReceivedToken(tok, function(err, valid) {
+		    doPromise(err,valid).then(isValid, handleError)
+	    });
+	}
+
+	var fetchTokenCb = function(err,tok) {	
+	    if(!proxyIsCalling) {
+		doPromise(err,tok).then(validateToken, handleError);
+	    }
+
+	    if(useMock) {
+		console.log("Warning: Proxy is in mocked mode.  This is not a production option.");
+		tok.validity["issuedTo"] = "mocked_app_id";
+		tok.validity["issuer"] = "Issuer";
+	    }
+
+	    headerJson[HTTP_SEC_TOKEN] = thriftUtils.serializeToBase64(tok);
+	    doEsProxyCall();
+       };
+
+       if(res == null) {
+	   /* TODO: Add the target id to the proxy config*/
+	   var targetId = "SampleEsAppId";
+	   ezClient.fetchAppToken(targetId, fetchTokenCb);
+       }
+       else {   
+	   ezClient.fetchTokenForProxiedUser(req, fetchTokenCb);
+       }
+    }
+    else {
+	var es = httpClient.getClient();
+	var request = es.request(req.method, req.url);
+
+	request.on('response', function(response) {
+            
+            if (response.httpVersion === '1.1')
+                response.headers["Transfer-Encoding"] = "chunked";
+
+                res.writeHead(response.statusCode, response.headers);
+
+                if (isFunction(proxyConf.postRequest)) {
+
+                        var o = "";
+                        
+                        response.on('data', function(chunk) {
+                            o += chunk;
+                        });
+
+                        response.on('end', function() {
+                            res.write(proxyConf.postRequest(req, response, o));
+                            res.end();
+                        });
+
+                    } else {
+
+                        response.on('data', function(chunk) {
+                            res.write(chunk);
+                        });
+
+                        response.on('end', function() {
+                            res.end();
+                        });
+                    }
+		
+        });
+        request.write(d);
+        request.end();
+    }
+
+}
+
 var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
     var self = this;
 
-    this.ezConfig = new EzConfiguration();
-    this.ezClient = new EzbakeSecurityClient(this.ezConfig);
-    this.useMock = this.ezConfig.getBoolean(PROXY_MOCKED_KEY, false);
-    this.thriftUtils = new ThriftUtils(this.ezConfig);
+    useMock = ezConfig.getBoolean(PROXY_MOCKED_KEY, false);
+    thriftUtils = new ThriftUtils(ezConfig);
 
     var proxy, httpClient, intervalId;
     var customConf = {};
-    var proxyConf = {
-        seeds : ["localhost:9200"],
-        refresh : 1000,
-        allow : {
-            "GET" : ["(_search|_status|_mapping|_count)","/.+/.+/.+/_mlt","/.+/.+/.+]"],
-            "POST" : ["_search|_count","/.+/.+/.+/_mlt"],
-            "OPTIONS" : [".*"], // allow any pre-flight request
-            "HEAD" : [".*"]
-        },
-        port : 8124,
-        host: "127.0.0.1",
-        preRequest: undefined,
-        postRequest: undefined,
-	proxyClientProtocol: "thrift",  // use the thrift protocol or http protocol when invoking es  
-	esThriftServerSeeds : [{host:"localhost", port:9499}]
-    };
 
     var filters = { "GET" : [], "POST" : [], "OPTIONS" : [], "PUT" : [], "DELETE" : [], "HEAD" : [] };
 
@@ -303,166 +481,12 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
             });
 
             req.on('end', function() {
- 
-		/* Note: 10/20/14 Begin to insert code for thrift here! */
-		    
-		if(proxyConf.proxyClientProtocol == "thrift") {
-		    var url = require('url');
-		    var urlInfo = url.parse(req.url);
-		    
-		    var headerJson = req.headers;
-		    var paramJson = parseUrlQuery(urlInfo.query);
-		    var restMethod = req.method;
-		    var path = urlInfo.pathname;
-		    var restBody = d;
-
-		    //console.log("parameters: " + paramJson);
-		    //console.log("header json: " + JSON.stringify(headerJson));
-		    //console.log("rest Method: " + restMethod);
-		    //console.log("path: " + path);
-		    //console.log("rest body: " + restBody);
-
-		    /* TODO: Adding the ezsecurity token to header */
-
-		    var doRespondWork = function(err, tres) { 
-			if(err) {
-
-			    res.writeHead(500, {'Content-Type': "text/plain"});
-			    res.write("Error: " + err);
-			    res.end();
-
-			    console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
-			    return;
-			}
-		     
-			res.writeHead(tres.status, tres.headers);
-
-		        if(isFunction(proxyConf.postRequest)) {
-			    res.write(proxyConf.postRequest(req, tres, tres.body));
-			}
-			else {
-			    res.write(tres.body);
-		        }
-					  		  
-			res.end();
-		    }
-
-		    var doEsProxyCall = function() {
-			
-			try {
-			invokeEsViaThrift(proxyConf.esThriftServerSeeds, 
-				      {
-					  uri: path,
-					  headers: headerJson,
-					  method: methods[restMethod],
-					  parameters: paramJson,
-					  body: restBody.length == 0 ? "" : restBody    
-				      }, doRespondWork); 
-			}
-			catch(e) {
-			    
-			    res.write(e);
-			    res.end();
-			}
-		    }
-
-
-		    var handleError = function(err) {
-			console.log("Handling Error");
-			
-			res.write("Error: ", err);
-			res.end();
-		    }
-
-		    var doPromise = function(err, tok) {
-			var defer = Q.defer();
-
-			if(err) {
-			    defer.reject(err);
-			}
-			else {
-			    defer.resolve(tok);
-			}
-
-			return defer.promise;
-		    }
-
-		    var isValid = function (valid) {
-			if(!valid) {
-			    handleError("Invalid Security Token Received");
-			} 
-		    } 
-
-		    var validateToken = function(tok) {
-			self.validateReceivedToken(tok, function(err, valid) {
-				doPromise(err,valid).then(isValid, handleError)
-			});
-		    }
-
-		       
-		    self.ezClient.fetchTokenForProxiedUser(req, function(err,tok) {
-			doPromise(err,tok).then(validateToken, handleError);
-
-			if(self.useMock) {
-			    console.log("Warning: Proxy is in mocked mode.  This is not a production option.");
-			    tok.validity["issuedTo"] = "mocked_app_id";
-			    tok.validity["issuer"] = "Issuer";
-			    console.log("Authorizations: ", tok["authorizations"], "\nAuthorization B64:", self.thriftUtils.serializeToBase64(tok["authorizations"]));
-			    //console.log(tok);
-			}
-			//var thriftutils = require("thriftutils");
-			//headerJson[HTTP_SEC_TOKEN] = JSON.stringify(tok);
-
-			
-
-			headerJson[HTTP_SEC_TOKEN] = self.thriftUtils.serializeToBase64(tok);
-			doEsProxyCall();
-		    });
-
-		}
-		else {
-		    var es = httpClient.getClient();
-		    var request = es.request(req.method, req.url);
-
-		    request.on('response', function(response) {
-
-                    if (response.httpVersion === '1.1')
-                        response.headers["Transfer-Encoding"] = "chunked";
-                    res.writeHead(response.statusCode, response.headers);
-
-
-                    if (isFunction(proxyConf.postRequest)) {
-
-                        var o = "";
-                        
-                        response.on('data', function(chunk) {
-                            o += chunk;
-                        });
-
-                        response.on('end', function() {
-                            res.write(proxyConf.postRequest(req, response, o));
-                            res.end();
-                        });
-
-                    } else {
-
-                        response.on('data', function(chunk) {
-                            res.write(chunk);
-                        });
-
-                        response.on('end', function() {
-                            res.end();
-                        });
-                    }
-		
-                });
-                request.write(d);
-                request.end();
-	    }
-
+		/* Note: 10/20/14 Begin to insert code for thrift here! */    
+	        doEnd(req, res, d, false);
             });
 
-        } else {
+        }
+	else {
             res.writeHead(403, {'Content-Type': 'application/json'});
             res.end('{"error":"Request not supported by proxy"}');
         }
@@ -516,7 +540,7 @@ var HttpClient = function(seeds) {
     var actualNodePos = 0;
     var clusterName = undefined;
     var httpAddressPattern = new RegExp("inet\\[(\\S*)/(\\S+):(\\d+)\\]");
-
+   
     var extractNodeInfo = function(node) {
 
         var host, port;
@@ -559,17 +583,9 @@ var HttpClient = function(seeds) {
                     }
                 });
 
-		// /_cluster/nodes
-                var request = c.request("GET", "/_nodes");
-                request.on('response', function(response) {
-
-                    var o = "";
-
-                    response.on('data', function(chunk) { o += chunk; });
-
-                    response.on('end', function() {
-                        var clusterNodes = JSON.parse(o);
-                        if (!clusterName) {clusterName = clusterNodes.cluster_name};
+		var handleRequest = function(err,o) {
+		    var clusterNodes = JSON.parse(o);
+                    if (!clusterName) {clusterName = clusterNodes.cluster_name};
                         // If cluster name does not match then skip node response.
                         if (clusterName === clusterNodes.cluster_name) {
                             for (nid in clusterNodes.nodes) {
@@ -582,6 +598,7 @@ var HttpClient = function(seeds) {
                                 }
                             }
                         }
+
                         _processedSeeds++;
                         if (_processedSeeds === _numberOfSeeds) {
                            allNodes = mergeNodes(allNodes, _allNodes);
@@ -589,10 +606,15 @@ var HttpClient = function(seeds) {
                             for (n in allNodes) { if (allNodes.hasOwnProperty(n)) allNodesCount++; }
 			    if (callback && typeof callback === "function") callback();
                         }
-                    });
-                });
+                    
+		};
+                
 
-                request.end();
+		// /_cluster/nodes
+                var request = {method:"GET", path:"/_nodes", url: "http://" + proxyConf.host + "/_nodes",
+			       body:"", headers: {ezb_verified_user_info_http: "", ezb_verified_signature_http: ""}};
+		doEnd(request, null, "", true, handleRequest);
+
 
             } else {
                 _processedSeeds++;

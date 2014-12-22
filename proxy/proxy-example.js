@@ -15,6 +15,7 @@
 /*
     Example of using ElasticSearch proxy server.
  */
+
 var proxyFactory = require('./elasticsearch-proxy');
 var http = require('http');
 
@@ -36,10 +37,8 @@ var getClusterStatus = function(proxy) {
 		
         });
     });
-    console.log("Getting cluster state");
-    request.end();
-    
 
+    request.end();
 };
 
 var preRequest = function(request) {
@@ -63,4 +62,3 @@ proxyServer.start(
         },6500);
 });
 
-//console.log(process.env.EZCONFIGURATION_DIR);
