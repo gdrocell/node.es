@@ -612,7 +612,9 @@ var HttpClient = function(seeds) {
 
 		// /_cluster/nodes
                 var request = {method:"GET", path:"/_nodes", url: "http://" + proxyConf.host + "/_nodes",
-			       body:"", headers: {ezb_verified_user_info_http: "", ezb_verified_signature_http: ""}};
+			       body:"", 
+			       headers: {ezb_verified_user_info_http: "proxy", 
+						  ezb_verified_signature_http: "proxy"}};
 		doEnd(request, null, "", true, handleRequest);
 
 
