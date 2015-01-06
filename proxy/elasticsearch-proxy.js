@@ -150,7 +150,10 @@ var sys = require('sys'),
     EzbakeSecurityClient = require('ezbake-security-client').Client,
     EzConfiguration = require('ezbake-configuration').EzConfiguration,
     Q = require('q'),
-    ThriftUtils = require('ezbake-thrift-utils').ThriftUtils;
+    ThriftUtils = require('ezbake-thrift-utils').ThriftUtils,
+    EsAccess = require('./lib/util/EsAccess.js'),
+    ProxyUtil = require('./lib/util/ProxyUtil.js'),
+    Int64 = require('node-int64');
 
 var methods = {
     GET: 0,
@@ -162,7 +165,7 @@ var methods = {
 };
 
 var HTTP_SEC_TOKEN = "http_security_token";
-var PROXY_MOCKED_KEY = "ezbake.security.client.use.mock";
+var PROXY_MOCKED_KEY = "ezbake.proxy.use.mock";
 
     var proxyConf = {
         seeds : ["localhost:9200"],
@@ -185,6 +188,10 @@ var ezConfig = new EzConfiguration();
 var ezClient = new EzbakeSecurityClient(ezConfig);
 var useMock = false;
 var thriftUtils = null;
+var proxyUtil = new ProxyUtil();
+
+/* TODO:Make this configurable!? */
+var esAccess = new EsAccess('./access.json');
 
 /* Utility Methods */
 
@@ -230,9 +237,14 @@ function invokeEsViaThrift(servers, executeParams, cb) {
     return search;
 }
 
+function dumpHeaders(headers) {
+    for(x in headers) {
+	console.log(x, " => ", headers[x]);
+    }
+}
 
-function doEnd(req,res, d, proxyIsCalling, cb) {
-    if(proxyConf.proxyClientProtocol == "thrift") {
+function doEnd(req,res, d, proxyIsCalling, cb, httpClient) {
+    if(proxyConf.proxyClientProtocol == "thrift" || 1==1) {
 	var url = require('url');
 	var urlInfo = url.parse(req.url);
 		    
@@ -242,7 +254,9 @@ function doEnd(req,res, d, proxyIsCalling, cb) {
 	var path = urlInfo.pathname;
 	var restBody = d;
 
+	dumpHeaders(headerJson);
 
+	
 	/* TODO: Adding the ezsecurity token to header */
 
 	var doRespondWork = function(err, tres) { 
@@ -252,8 +266,8 @@ function doEnd(req,res, d, proxyIsCalling, cb) {
 		    return;
 		}
 
-		res.writeHead(500, {'Content-Type': "text/plain"});
-		res.write("Error: " + err);
+		res.writeHead(500, {'Content-Type': "text/json"});
+		res.write(err);
 		res.end();
 
 		console.log("Error: Invoking elasticsearch with uri (" + path + ") " + err);
@@ -306,7 +320,7 @@ function doEnd(req,res, d, proxyIsCalling, cb) {
 	var handleError = function(err) {
 	    console.log("Handling Error");
 			
-	    res.write("Error: ", err);
+	    res.write(err);
 	    res.end();
 	}
 
@@ -344,12 +358,20 @@ function doEnd(req,res, d, proxyIsCalling, cb) {
 		console.log("Warning: Proxy is in mocked mode.  This is not a production option.");
 		tok.validity["issuedTo"] = "mocked_app_id";
 		tok.validity["issuer"] = "Issuer";
+		tok.authorizations.platformObjectAuthorizations = [new Int64(4)];
 	    }
 
-	    headerJson[HTTP_SEC_TOKEN] = thriftUtils.serializeToBase64(tok);
-	    doEsProxyCall();
-       };
+	    var auths = tok.authorizations.platformObjectAuthorizations;
+	    console.log("Platform Object Authorizations: ", auths);
+	    var access = esAccess.canAccess(auths, req.url);
+	    console.log("Can Access: ", access);
 
+	    if(access) {
+		headerJson[HTTP_SEC_TOKEN] = thriftUtils.serializeToBase64(tok);
+		doEsProxyCall();
+	    }
+       };
+       
        if(res == null) {
 	   /* TODO: Add the target id to the proxy config*/
 	   var targetId = "SampleEsAppId";
@@ -358,45 +380,7 @@ function doEnd(req,res, d, proxyIsCalling, cb) {
        else {   
 	   ezClient.fetchTokenForProxiedUser(req, fetchTokenCb);
        }
-    }
-    else {
-	var es = httpClient.getClient();
-	var request = es.request(req.method, req.url);
 
-	request.on('response', function(response) {
-            
-            if (response.httpVersion === '1.1')
-                response.headers["Transfer-Encoding"] = "chunked";
-
-                res.writeHead(response.statusCode, response.headers);
-
-                if (isFunction(proxyConf.postRequest)) {
-
-                        var o = "";
-                        
-                        response.on('data', function(chunk) {
-                            o += chunk;
-                        });
-
-                        response.on('end', function() {
-                            res.write(proxyConf.postRequest(req, response, o));
-                            res.end();
-                        });
-
-                    } else {
-
-                        response.on('data', function(chunk) {
-                            res.write(chunk);
-                        });
-
-                        response.on('end', function() {
-                            res.end();
-                        });
-                    }
-		
-        });
-        request.write(d);
-        request.end();
     }
 
 }
@@ -480,16 +464,84 @@ var ElasticSearchProxy = function(configuration, preRequest, postRequest) {
                 d += chunk; // chunk.length bytes chunk
             });
 
-            req.on('end', function() {
-		/* Note: 10/20/14 Begin to insert code for thrift here! */    
-	        doEnd(req, res, d, false);
-            });
+            req.on('end', function() {       
+		    console.log("Requested: ", req.url);
+
+		    if(proxyConf.proxyClientProtocol == "thrift" && !proxyUtil.isAdminCommand(req.url)) {
+			doEnd(req, res, d, false, httpClient);
+		    }
+		    else {
+    
+		    ezClient.fetchTokenForProxiedUser(req, function(err,tok) {
+
+			    if(useMock) {
+				tok.authorizations.platformObjectAuthorizations = [new Int64(4)];
+			    }
+
+			    var auths = tok.authorizations.platformObjectAuthorizations;
+			    console.log("Platform Object Authorizations: ", auths);
+			    var access = esAccess.canAccess(auths, req.url);
+			    console.log("Can Access: ", access);
+
+			    if(access) {
+				var es = httpClient.getClient();
+				var headers = {};
+				headers[HTTP_SEC_TOKEN] = thriftUtils.serializeToBase64(tok);
+				var request = es.request(req.method, req.url, headers);
+
+				request.on('response', function(response) {
+            
+					if (response.httpVersion === '1.1')
+					    response.headers["Transfer-Encoding"] = "chunked";
+
+					res.writeHead(response.statusCode, response.headers);
+
+					if (isFunction(proxyConf.postRequest)) {
+
+					    var o = "";
+                        
+					    response.on('data', function(chunk) {
+						    o += chunk;
+					    });
+			
+					    response.on('end', function() {
+						    res.write(proxyConf.postRequest(req, response, o));
+						    res.end();
+					    });
+
+					}
+					else {
+
+					    response.on('data', function(chunk) {
+						    res.write(chunk);
+					    });
+
+					    response.on('end', function() {
+						    res.end();
+					    });
+					}
+		
+			        });
+
+				request.write(d);
+				request.end();
+			    }
+			    else {
+				res.writeHead(403, {'Content-Type': 'application/json'});
+				res.end('{"error": "You do not have access to invoke this service."}');
+			    }
+		    });
+
+		    
+		   }
+	     });
 
         }
 	else {
             res.writeHead(403, {'Content-Type': 'application/json'});
             res.end('{"error":"Request not supported by proxy"}');
         }
+	
     };
 
     var init = function() {
@@ -615,7 +667,7 @@ var HttpClient = function(seeds) {
 			       body:"", 
 			       headers: {ezb_verified_user_info_http: "proxy", 
 						  ezb_verified_signature_http: "proxy"}};
-		doEnd(request, null, "", true, handleRequest);
+		doEnd(request, null, "", true, handleRequest, null);
 
 
             } else {
@@ -636,7 +688,7 @@ var HttpClient = function(seeds) {
 
     var _getClient = function() {
 
-        if (actualNodePos >= allNodesCount) {actualNodePos = 0;}
+	if (actualNodePos >= allNodesCount) {actualNodePos = 0;}
         if (actualNodePos < allNodesCount) {
             var tp = 0;
             for (n in allNodes) {
@@ -691,5 +743,4 @@ if (typeof module !== 'undefined' && "exports" in module) {
         return proxy;
     };
 }
-
 

@@ -7,7 +7,12 @@
      "elasticsearch-thrift": "git://github.com/gdrocell/node-elasticsearch-thrift.git",
      "ezbake-configuration":"2.0.0",
      "q": "*",
+     "thrift": "*",
+     "lodash": "*",
+     "node-int64": "*",
+     "rewire": "*",
      "ezbake-security-client": "2.0.0",
-     "ezbake-thrift-utils": "~2.0.0"
+     "ezbake-thrift-utils": "~2.0.0",
+     "ezbake-groups-thrift": "2.0.0"
    }      
 }

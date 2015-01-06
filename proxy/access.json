@@ -1,0 +1,24 @@
+{
+    "service_access": [
+        {
+            "location": "/_plugin/head",
+            "allow": ["app-caveice-admin", "TestGroup", "NoBody"],
+	    "deny": ["*"]
+        },
+	{
+	    "location": "/_search",
+	    "allow" : ["app-caveice-admin"],
+	    "deny": ["*"]
+	},
+	{
+            "location": "/_cluster/stats",
+	    "allow": ["*"],
+	    "deny": ["TestGroup"]
+	},
+	{
+	    "location": "/_nodes",	
+	    "allow": [],
+	    "deny": []
+	}	
+    ]
+}
